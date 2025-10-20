@@ -127,40 +127,18 @@
         return (<div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4"><div className="bg-white rounded-xl shadow-2xl p-8 max-w-lg w-full"><h3 className="text-2xl font-bold text-gray-800 mb-6">Edit Participant</h3><form onSubmit={handleSubmit} className="space-y-4"><div><label className="block text-sm font-medium text-gray-700">Full Name</label><input type="text" name="name" value={formData.name} onChange={handleChange} className="mt-1 w-full p-3 rounded-lg border border-gray-300 focus:ring-2 focus:ring-red-400 focus:outline-none transition" /></div><div><label className="block text-sm font-medium text-gray-700">Registered Email</label><input type="email" name="registered_email" value={formData.registered_email} onChange={handleChange} required className="mt-1 w-full p-3 rounded-lg border border-gray-300 focus:ring-2 focus:ring-red-400 focus:outline-none transition" /></div><div className="flex justify-end space-x-3 pt-4"><button type="button" onClick={onClose} className="px-4 py-2 bg-gray-200 text-gray-800 font-semibold rounded-lg hover:bg-gray-300 transition-colors">Cancel</button><button type="submit" disabled={isUpdating} style={{ backgroundColor: PRIMARY_RED }} className={`px-4 py-2 rounded-lg font-bold text-white transition-all duration-300 shadow-md ${isUpdating ? 'opacity-70 cursor-not-allowed' : 'hover:opacity-80'}`}>{isUpdating ? 'Saving...' : 'Save Changes'}</button></div></form></div></div>);
     };
 
-    // --- 🎨 LOGIN MODAL WITH UPDATED REDIRECT LOGIC ---
     const LoginModal = ({ show, onClose, supabase }) => {
-        const [email, setEmail] = useState(''); 
-        const [message, setMessage] = useState(''); 
-        const [isLoading, setIsLoading] = useState(false);
-
+        const [email, setEmail] = useState(''); const [message, setMessage] = useState(''); const [isLoading, setIsLoading] = useState(false);
         const handleLogin = async (e) => { 
-            e.preventDefault(); 
-            setIsLoading(true); 
-            setMessage('⏳ Sending magic link...');
-            
-            // --- THIS IS THE KEY CHANGE ---
-            // Use the live domain for redirects unless we are on localhost
-            const redirectURL = window.location.hostname === 'localhost' 
-                ? window.location.origin 
-                : 'https://cert.kilalitribe.com';
-
+            e.preventDefault(); setIsLoading(true); setMessage('⏳ Sending magic link...');
+            const redirectURL = window.location.hostname === 'localhost' ? window.location.origin : 'https://cert.kilalitribe.com';
             try { 
-                const { error } = await supabase.auth.signInWithOtp({ 
-                    email, 
-                    options: { 
-                        emailRedirectTo: redirectURL 
-                    }
-                }); 
+                const { error } = await supabase.auth.signInWithOtp({ email, options: { emailRedirectTo: redirectURL }}); 
                 if (error) throw error; 
-                setMessage('✅ Success! Check your inbox.'); 
-                setEmail(''); 
-            } catch (error) { 
-                setMessage(`❌ Login failed: ${error.message}`); 
-            } finally { 
-                setIsLoading(false); 
-            }
+                setMessage('✅ Success! Check your inbox.'); setEmail(''); 
+            } catch (error) { setMessage(`❌ Login failed: ${error.message}`); 
+            } finally { setIsLoading(false); }
         };
-
         if (!show) return null;
         return (<div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4"><div className="bg-white rounded-xl shadow-2xl p-8 max-w-md w-full"><h3 className="text-2xl font-bold text-gray-800 mb-4">Administrator Login</h3>{message && <StatusMessage msg={message} type={message.startsWith('❌') ? 'error' : 'info'} />}<form onSubmit={handleLogin} className="space-y-4"><input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="Enter Admin Email" required className="w-full p-3 rounded-lg border border-gray-300 focus:ring-2 focus:ring-red-400 focus:outline-none transition"/><button type="submit" disabled={isLoading} style={{ backgroundColor: PRIMARY_RED }} className={`w-full p-3 rounded-lg font-bold text-white transition-all duration-300 shadow-md ${isLoading ? 'opacity-70 cursor-not-allowed' : 'hover:opacity-80'}`}>{isLoading ? 'Sending...' : 'Send Magic Link'}</button></form><button onClick={onClose} className="mt-4 w-full text-sm text-center text-gray-500 hover:text-red-500">Close</button></div></div>);
     };
@@ -198,8 +176,19 @@
             e.preventDefault(); setIsSubmitting(true); setMessage('');
             const submittedEmail = formData.registeredEmail.trim().toLowerCase();
             const record = participantRecords.find(p => p.registered_email.toLowerCase() === submittedEmail);
+            
             if (!record) { setMessage('❌ Email not found in approved list.'); setIsSubmitting(false); return; }
-            if (record.name || record.feedback) { setMessage('✅ Feedback already submitted. You can download your certificate.'); setFormData({ ...formData, name: record.name }); setSubmitted(true); setIsSubmitting(false); return; }
+            
+            // --- FIX: Logic to handle re-submission and "Not NULL" ---
+            if (record.name && record.name !== 'Not NULL') { 
+                setMessage('✅ Feedback already submitted. You can download your certificate.'); 
+                // Use the name from the form if the user re-typed it, otherwise use the existing name from the record
+                setFormData({ ...formData, name: formData.name || record.name }); 
+                setSubmitted(true); 
+                setIsSubmitting(false); 
+                return; 
+            }
+            
             try { 
                 const { error } = await supabase.from('feedback_submissions').update({ name: formData.name, email: formData.email, feedback: formData.feedback }).eq('registered_email', submittedEmail); 
                 if (error) throw error; 
