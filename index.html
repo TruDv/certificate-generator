@@ -17,7 +17,7 @@
 <div id="root"></div>
 
 <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
-<script src="https://unpkg.com/react-dom@18/umd/react.dom.production.min.js"></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
 <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 <script src="./supabase.min.js" id="supabaseScript" onload="window.supabaseLoaded = true;" onerror="console.error('❌ Supabase script failed to load')"></script>
 
@@ -166,23 +166,9 @@
                 const currentUser = session?.user || null;
                 setUser(currentUser); setIsAdmin(currentUser && ADMIN_EMAILS.includes(currentUser.email.toLowerCase())); setIsAuthReady(true); if (currentUser) setShowLoginModal(false);
             });
-
-            // --- URL Parameter Handling ---
-            const urlParams = new URLSearchParams(window.location.search);
-            const status = urlParams.get('status');
-            const nameParam = urlParams.get('name'); // Use a different variable name to avoid conflict
-            const emailParam = urlParams.get('email'); // Use a different variable name
-
-            if (status === 'success' && nameParam && emailParam) {
-                setFormData({ name: nameParam, registeredEmail: emailParam, email: emailParam, feedback: '' }); // Pre-fill form data
-                setSubmitted(true); // Show success screen
-                setMessage('✅ Welcome back! You can download your certificate below.'); // Optional welcome message
-                window.history.replaceState(null, '', window.location.pathname); // Clean URL
-            }
-            
-            fetchParticipantRecords(); // Fetch records regardless of parameters
+            fetchParticipantRecords();
             return () => subscription?.unsubscribe();
-        }, [supabase, fetchParticipantRecords]); // Dependencies updated
+        }, [supabase, fetchParticipantRecords]);
 
         const handleChange = (e) => setFormData({ ...formData, [e.target.name]: e.target.value });
 
@@ -193,10 +179,11 @@
             
             if (!record) { setMessage('❌ Email not found in approved list.'); setIsSubmitting(false); return; }
             
+            // --- FIX: Logic to handle re-submission and "Not NULL" ---
             if (record.name && record.name !== 'Not NULL') { 
                 setMessage('✅ Feedback already submitted. You can download your certificate.'); 
-                // CRITICAL FIX: Ensure the correct name is used for the certificate, even if user re-enters email
-                setFormData({ ...formData, name: record.name }); // Use existing name from DB
+                // Use the name from the form if the user re-typed it, otherwise use the existing name from the record
+                setFormData({ ...formData, name: formData.name || record.name }); 
                 setSubmitted(true); 
                 setIsSubmitting(false); 
                 return; 
@@ -219,8 +206,58 @@
             } finally { setIsSubmitting(false); }
         };
         
-        const handleDownloadCertificate = async () => { /* ... (handleDownloadCertificate is unchanged) ... */ };
+        const handleDownloadCertificate = async () => {
+            setIsGenerating(true); setMessage('⏳ Generating certificate...');
+            try {
+                const [logoData, sigData] = await Promise.all([ loadImage(KILALI_LOGO_URL), loadImage(SIGNATURE_IMAGE_URL) ]);
+                if (!logoData || !logoData.dataUrl) throw new Error('Kilali Logo failed to load.');
+                if (!sigData || !sigData.dataUrl) throw new Error('Signature image failed to load.');
+
+                const doc = new jsPDF({ orientation: 'l', unit: 'mm', format: 'a4' });
+                const w = doc.internal.pageSize.getWidth(); const h = doc.internal.pageSize.getHeight(); const padding = 15;
+                doc.setFillColor('#FFFFFF'); doc.rect(0, 0, w, h, 'F'); doc.setFillColor(PRIMARY_RED); doc.triangle(w, 0, w, h * 0.4, w * 0.6, 0, 'F'); doc.setFillColor(ACCENT_GOLD); doc.triangle(w, 0, w, h * 0.3, w * 0.7, 0, 'F');
+                doc.setDrawColor(ACCENT_GOLD); doc.setLineWidth(1.5); doc.rect(padding, padding, w - 2 * padding, h - 2 * padding, 'S');
+                const logoType = logoData.dataUrl.split(';')[0].split('/')[1].toUpperCase(); const targetLogoWidth = 35; const logoAspectRatio = logoData.width / logoData.height; const finalLogoHeight = targetLogoWidth / logoAspectRatio;
+                doc.addImage(logoData.dataUrl, logoType, padding + 5, padding + 5, targetLogoWidth, finalLogoHeight);
+                const contentStartX = w / 2; const contentStartY = 65;
+                doc.setFont('helvetica', 'bold'); doc.setFontSize(24); doc.setTextColor(PRIMARY_RED); doc.text(EVENT_TITLE, contentStartX, contentStartY, { align: 'center' });
+                doc.setFont('helvetica', 'bold'); doc.setFontSize(45); doc.setTextColor(TEXT_DARK); doc.text('CERTIFICATE OF PARTICIPATION', contentStartX, contentStartY + 15, { align: 'center' });
+                doc.setFont('helvetica', 'normal'); doc.setFontSize(16); doc.setTextColor(TEXT_DARK); doc.text('Proudly Presented to', contentStartX, contentStartY + 35, { align: 'center' });
+                doc.setFont('times', 'bolditalic'); doc.setFontSize(60); doc.setTextColor(PRIMARY_RED); const participantName = formData.name || 'Participant Name'; doc.text(participantName, contentStartX, contentStartY + 65, { align: 'center' });
+                doc.setDrawColor(ACCENT_GOLD); doc.setLineWidth(1); const nameTextWidth = doc.getStringUnitWidth(participantName) * 60 / doc.internal.scaleFactor; doc.line(contentStartX - nameTextWidth/2, contentStartY + 70, contentStartX + nameTextWidth/2, contentStartY + 70);
+                const detailY = contentStartY + 85;
+                doc.setFont('helvetica', 'normal'); doc.setFontSize(12); doc.setTextColor(TEXT_DARK); doc.text('For successful participation in the annual conference themed:', contentStartX, detailY, { align: 'center' });
+                doc.setFont('helvetica', 'bold'); doc.setFontSize(16); doc.setTextColor(PRIMARY_RED); doc.text(`“${EVENT_THEME}”`, contentStartX, detailY + 8, { align: 'center' });
+                doc.setFont('helvetica', 'normal'); doc.setFontSize(12); doc.setTextColor(TEXT_DARK); doc.text(`Held on Thursday, October 23rd, at Hotel Presidential, Port Harcourt.`, contentStartX, detailY + 18, { align: 'center' });
+                
+                const sigBlockY = h - 28;
+                const sig1X = w / 4;
+                const sigType = sigData.dataUrl.split(';')[0].split('/')[1].toUpperCase();
+                const sigTargetWidth = 32; 
+                const sigAspectRatio = sigData.width / sigData.height;
+                const finalSigHeight = sigTargetWidth / sigAspectRatio;
+                doc.addImage(sigData.dataUrl, sigType, sig1X - (sigTargetWidth / 2), sigBlockY - finalSigHeight - 2, sigTargetWidth, finalSigHeight);
+                doc.setDrawColor(TEXT_DARK); doc.setLineWidth(0.5); doc.line(sig1X - 30, sigBlockY, sig1X + 30, sigBlockY);
+                doc.setFont('helvetica', 'bold'); doc.setFontSize(10); doc.setTextColor(TEXT_DARK); doc.text('Dr Mrs Tonye Ifie-Sekibo', sig1X, sigBlockY + 6, { align: 'center' });
+                doc.setFont('helvetica', 'normal'); doc.text('Chairperson, The Kilali Tribe', sig1X, sigBlockY + 10, { align: 'center' });
+                
+                const sig2X = w * 3/4;
+                const dateLineY = sigBlockY;
+                const dateTextY = dateLineY - 2;
+                doc.setFont('helvetica', 'bold'); doc.setFontSize(11); doc.text(`${new Date().toISOString().slice(0, 10)}`, sig2X, dateTextY, { align: 'center' });
+                doc.setDrawColor(TEXT_DARK); doc.setLineWidth(0.5); doc.line(sig2X - 30, dateLineY, sig2X + 30, dateLineY);
+                doc.setFont('helvetica', 'normal'); doc.setFontSize(10); doc.text('Date of Issuance', sig2X, dateLineY + 6, { align: 'center' }); 
+                
+                doc.save(`${participantName.replace(/\s/g, '_')}_Certificate.pdf`);
+                const { error: updateError } = await supabase.from('feedback_submissions').update({ certificate_downloaded_at: new Date().toISOString() }).eq('registered_email', formData.registeredEmail.trim().toLowerCase());
+                if (updateError) throw new Error(`Failed to track download: ${updateError.message}`);
+                setMessage('✅ Certificate downloaded successfully!');
+            } catch (error) { console.error("❌ Certificate generation/tracking failed:", error); setMessage(`❌ Error: ${error.message}`);
+            } finally { setIsGenerating(false); }
+        };
+
         const handleLogout = async () => { if (supabase) await supabase.auth.signOut(); };
+
         const SuccessComponent = () => (<div className="p-8 flex flex-col items-center justify-center h-full text-center"><svg className="w-16 h-16 mb-5 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg><h1 className="text-3xl font-bold text-gray-800 mb-3">Feedback Received!</h1><p className="text-lg text-gray-600 mb-8">Thank you! Click below to get your certificate.</p><button onClick={handleDownloadCertificate} disabled={isGenerating} style={{ backgroundColor: ACCENT_GOLD }} className={`w-full max-w-sm p-4 rounded-lg font-bold text-gray-900 text-lg transition-all duration-300 shadow-md ${isGenerating ? 'opacity-70 cursor-not-allowed' : 'hover:opacity-80 hover:-translate-y-1'}`}>{isGenerating ? 'Generating...' : 'Download Certificate'}</button></div>);
 
         return (
