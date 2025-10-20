@@ -131,7 +131,7 @@
         const [email, setEmail] = useState(''); const [message, setMessage] = useState(''); const [isLoading, setIsLoading] = useState(false);
         const handleLogin = async (e) => { 
             e.preventDefault(); setIsLoading(true); setMessage('⏳ Sending magic link...');
-            const redirectURL = window.location.hostname === 'localhost' ? window.location.origin : 'https://cert.kilalitribe.com';
+            const redirectURL = window.location.hostname === 'localhost' ? window.location.origin : 'https://certs.kilalitribe.com';
             try { 
                 const { error } = await supabase.auth.signInWithOtp({ email, options: { emailRedirectTo: redirectURL }}); 
                 if (error) throw error; 
