@@ -11,22 +11,25 @@ const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
 const supabase = createClient(supabaseUrl, supabaseAnonKey);
 
-// --- KILALI BRAND CONSTANTS ---
+// --- KILALI BRAND CONSTANTS (UPDATED FOR 2026) ---
 const PRIMARY_RED = '#8B0000';
 const ACCENT_GOLD = '#FFD700';
 const TEXT_DARK = '#1f2937';
-const EVENT_TITLE = 'Kilali Tribe Conference 2025';
-const EVENT_THEME = 'Bold Moves How Women Win: Wealth, Power, and Creativity';
+const EVENT_TITLE = 'Annual Conference 2026';
+const EVENT_THEME = 'Her Voice. Her Power. - 5 Years of Impact';
+const EVENT_DATE_VENUE = 'Wednesday, October 28, 2026 | Pavilion Event Centre, Port Harcourt';
+const SUPPORT_EMAIL = 'contact@kilalitribe.com';
 
 // Images loaded from the /public folder
 const KILALI_LOGO_URL = '/Kilalilogo.jpg'; 
 const SIGNATURE_IMAGE_URL = '/Signature.png'; 
+const BACKGROUND_IMAGE_URL = '/certificate-bg.jpg'; 
 
 export default function CertificatePortal() {
   const [formData, setFormData] = useState({ name: '', registeredEmail: '', feedback: '' });
   const [isGenerating, setIsGenerating] = useState(false);
   const [message, setMessage] = useState('');
-  const [step, setStep] = useState<'form' | 'success'>('form');
+  const [step, setStep] = useState<'form' | 'success' | 'already_downloaded'>('form');
 
   // Helper to load images for PDF
   const loadImage = async (src: string) => {
@@ -58,7 +61,6 @@ export default function CertificatePortal() {
     const submittedEmail = formData.registeredEmail.trim().toLowerCase();
 
     try {
-      // 1. Check if email exists and hasn't submitted feedback yet
       const { data: record, error: fetchError } = await supabase
         .from('feedback_submissions')
         .select('*')
@@ -67,6 +69,14 @@ export default function CertificatePortal() {
 
       if (fetchError || !record) {
         throw new Error('Email not found in our approved list. Please contact support.');
+      }
+
+      // 🛑 THE LOCK: Check if they have already downloaded it
+      if (record.certificate_downloaded_at) {
+        setStep('already_downloaded');
+        setMessage('⚠️ Certificate already downloaded.');
+        setIsGenerating(false);
+        return;
       }
 
       if (record.name && record.name !== 'Not NULL') {
@@ -78,7 +88,6 @@ export default function CertificatePortal() {
         return;
       }
 
-      // 2. Update Supabase with their name and feedback
       setMessage('Saving your feedback...');
       const { error: updateError } = await supabase
         .from('feedback_submissions')
@@ -102,20 +111,47 @@ export default function CertificatePortal() {
     setMessage('Generating certificate...');
 
     try {
-      const [logoData, sigData] = await Promise.all([
+      // Double check with Supabase before generating to prevent bypass
+      const { data: record, error: checkError } = await supabase
+        .from('feedback_submissions')
+        .select('certificate_downloaded_at')
+        .eq('registered_email', formData.registeredEmail.trim().toLowerCase())
+        .single();
+
+      if (checkError || !record) throw new Error("Could not verify user.");
+      
+      if (record.certificate_downloaded_at) {
+        setStep('already_downloaded');
+        setMessage('⚠️ Certificate already downloaded.');
+        setIsGenerating(false);
+        return;
+      }
+
+      const [logoData, sigData, bgData] = await Promise.all([
         loadImage(KILALI_LOGO_URL),
-        loadImage(SIGNATURE_IMAGE_URL)
+        loadImage(SIGNATURE_IMAGE_URL),
+        loadImage(BACKGROUND_IMAGE_URL)
       ]);
 
-      if (!logoData || !sigData) throw new Error("Failed to load images. Check your URLs.");
+      if (!logoData || !sigData) throw new Error("Failed to load required images. Check your URLs.");
 
       const doc = new jsPDF({ orientation: 'l', unit: 'mm', format: 'a4' });
       const w = doc.internal.pageSize.getWidth();
       const h = doc.internal.pageSize.getHeight();
       const padding = 15;
 
-      // Background & Borders
+      // --- BACKGROUND ---
       doc.setFillColor('#FFFFFF'); doc.rect(0, 0, w, h, 'F');
+      
+      if (bgData) {
+        // Add background image (adjust formatting if needed)
+        const bgType = bgData.dataUrl.split(';')[0].split('/')[1].toUpperCase();
+        // doc.addImage(bgData.dataUrl, bgType, 0, 0, w, h); 
+        // Note: Uncomment the line above to actually use the background image. 
+        // Currently commented out to keep the red/gold triangles.
+      }
+
+      // Background & Borders (Triangle design)
       doc.setFillColor(PRIMARY_RED); doc.triangle(w, 0, w, h * 0.4, w * 0.6, 0, 'F');
       doc.setFillColor(ACCENT_GOLD); doc.triangle(w, 0, w, h * 0.3, w * 0.7, 0, 'F');
       doc.setDrawColor(ACCENT_GOLD); doc.setLineWidth(1.5); doc.rect(padding, padding, w - 2 * padding, h - 2 * padding, 'S');
@@ -152,10 +188,12 @@ export default function CertificatePortal() {
       const detailY = contentStartY + 85;
       doc.setFont('helvetica', 'normal'); doc.setFontSize(12); doc.setTextColor(TEXT_DARK);
       doc.text('For successful participation in the annual conference themed:', contentStartX, detailY, { align: 'center' });
-      doc.setFont('helvetica', 'bold'); doc.setFontSize(16); doc.setTextColor(PRIMARY_RED);
+      
+      doc.setFont('helvetica', 'bold'); doc.setFontSize(18); doc.setTextColor(PRIMARY_RED);
       doc.text(`“${EVENT_THEME}”`, contentStartX, detailY + 8, { align: 'center' });
+      
       doc.setFont('helvetica', 'normal'); doc.setFontSize(12); doc.setTextColor(TEXT_DARK);
-      doc.text(`Held on Thursday, October 23rd, at Hotel Presidential, Port Harcourt.`, contentStartX, detailY + 18, { align: 'center' });
+      doc.text(`Held on ${EVENT_DATE_VENUE}.`, contentStartX, detailY + 18, { align: 'center' });
 
       // Signatures
       const sigBlockY = h - 28;
@@ -182,12 +220,13 @@ export default function CertificatePortal() {
       // Save PDF
       doc.save(`${participantName.replace(/\s/g, '_')}_Certificate.pdf`);
 
-      // Update download timestamp
+      // Update download timestamp to LOCK it
       await supabase
         .from('feedback_submissions')
         .update({ certificate_downloaded_at: new Date().toISOString() })
         .eq('registered_email', formData.registeredEmail.trim().toLowerCase());
       
+      setStep('already_downloaded'); // Instantly change UI to the locked state
       setMessage('✅ Certificate downloaded successfully!');
 
     } catch (error: any) {
@@ -200,10 +239,8 @@ export default function CertificatePortal() {
 
   return (
     <main className="min-h-screen bg-slate-50 flex flex-col items-center justify-center p-4">
-      {/* Card Container - Softer shadow and rounded corners */}
       <div className="bg-white rounded-3xl shadow-xl border border-slate-100 overflow-hidden max-w-xl w-full">
         
-        {/* Header - Keep the brand red here for impact, but with gold text */}
         <div className="bg-[#8B0000] p-8 text-center">
           <h2 className="text-sm font-bold text-[#FFD700] tracking-widest uppercase mb-2">
             {EVENT_TITLE}
@@ -212,7 +249,6 @@ export default function CertificatePortal() {
         </div>
 
         <div className="p-8 md:p-10">
-          {/* Status Message - Softer colors */}
           {message && (
             <div className={`p-4 mb-8 rounded-xl text-sm font-medium text-center border ${
               message.startsWith('❌') 
@@ -223,13 +259,13 @@ export default function CertificatePortal() {
             </div>
           )}
 
-          {step === 'form' ? (
+          {/* STEP 1: THE FORM */}
+          {step === 'form' && (
             <form onSubmit={handleSubmit} className="space-y-6">
               <p className="text-slate-600 text-center mb-6 text-sm leading-relaxed">
                 Please enter the email you registered with to receive your certificate.
               </p>
               
-              {/* Input styling: White bg, dark text, gold focus ring */}
               <div>
                 <label className="block text-sm font-semibold text-slate-700 mb-2">Registered Email</label>
                 <input 
@@ -271,7 +307,6 @@ export default function CertificatePortal() {
                 </div>
               </div>
 
-              {/* Submit Button - Gold background, dark text */}
               <button 
                 type="submit" 
                 disabled={isGenerating}
@@ -280,7 +315,10 @@ export default function CertificatePortal() {
                 {isGenerating ? 'Checking...' : 'Submit & Continue'}
               </button>
             </form>
-          ) : (
+          )}
+
+          {/* STEP 2: SUCCESS (READY TO DOWNLOAD) */}
+          {step === 'success' && (
             <div className="text-center py-8">
               <div className="w-20 h-20 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-6">
                 <svg className="w-10 h-10 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -290,7 +328,6 @@ export default function CertificatePortal() {
               <h3 className="text-2xl font-bold text-slate-800 mb-3">Thank You!</h3>
               <p className="text-slate-600 mb-8 max-w-xs mx-auto">Your feedback has been saved. You can now download your certificate.</p>
               
-              {/* Download Button - Gold background */}
               <button 
                 onClick={handleDownload} 
                 disabled={isGenerating}
@@ -298,6 +335,28 @@ export default function CertificatePortal() {
               >
                 {isGenerating ? 'Generating PDF...' : 'Download Certificate Now'}
               </button>
+            </div>
+          )}
+
+          {/* STEP 3: LOCKED (ALREADY DOWNLOADED) */}
+          {step === 'already_downloaded' && (
+            <div className="text-center py-8">
+              <div className="w-20 h-20 bg-orange-100 rounded-full flex items-center justify-center mx-auto mb-6">
+                <svg className="w-10 h-10 text-orange-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"></path>
+                </svg>
+              </div>
+              <h3 className="text-2xl font-bold text-slate-800 mb-3">Certificate Locked</h3>
+              <p className="text-slate-600 mb-8 max-w-sm mx-auto">
+                Our records show you have already downloaded your certificate. To prevent fraud, it cannot be downloaded again.
+              </p>
+              
+              <a 
+                href={`mailto:${SUPPORT_EMAIL}?subject=Certificate Support Request&body=Hi Support, I need help with my certificate for ${formData.registeredEmail}.`}
+                className="w-full inline-block bg-gray-900 text-white p-4 rounded-xl font-bold text-lg hover:bg-gray-800 transition-all shadow-md"
+              >
+                Contact Support
+              </a>
             </div>
           )}
         </div>
